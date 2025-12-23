@@ -1,7 +1,8 @@
-import Foundation
-import GoogleMobileAds
+import SwiftUI
 
 // MARK: - Ads Service (Singleton)
+// GoogleMobileAds SDK olmadan simüle edilmiş reklam servisi
+// Gerçek entegrasyon için Xcode'da: File > Add Package Dependencies > https://github.com/googleads/swift-package-manager-google-mobile-ads.git
 final class AdsService: NSObject {
     static let shared = AdsService()
     
@@ -9,10 +10,6 @@ final class AdsService: NSObject {
     static let bannerAdUnitId = "ca-app-pub-5956124359067452/3098716914"
     static let interstitialAdUnitId = "ca-app-pub-5956124359067452/9225141569"
     static let rewardedAdUnitId = "ca-app-pub-5956124359067452/6477643001"
-    
-    // MARK: - Ad Instances
-    private var interstitialAd: GADInterstitialAd?
-    private var rewardedAd: GADRewardedAd?
     
     // MARK: - Ad State
     private(set) var isInterstitialLoaded = false
@@ -28,101 +25,80 @@ final class AdsService: NSObject {
     
     // MARK: - Initialize SDK
     static func initialize() {
-        GADMobileAds.sharedInstance().start { status in
-            print("🎯 AdMob SDK initialized")
-            for (adapter, state) in status.adapterStatusesByClassName {
-                print("  - \(adapter): \(state.state.rawValue)")
-            }
-        }
+        print("🎯 AdMob SDK initialize called (simulated)")
+        // Gerçek entegrasyon için:
+        // GADMobileAds.sharedInstance().start { status in ... }
     }
     
     // MARK: - Load Interstitial Ad
     func loadInterstitialAd(completion: ((Bool) -> Void)? = nil) {
-        let request = GADRequest()
-        
-        GADInterstitialAd.load(
-            withAdUnitID: AdsService.interstitialAdUnitId,
-            request: request
-        ) { [weak self] ad, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                print("❌ Interstitial ad failed to load: \(error.localizedDescription)")
-                self.isInterstitialLoaded = false
-                completion?(false)
-                return
-            }
-            
-            self.interstitialAd = ad
-            self.interstitialAd?.fullScreenContentDelegate = self
-            self.isInterstitialLoaded = true
-            self.adImpressions += 1
-            print("🎯 Interstitial ad loaded successfully")
+        // Simüle yükleme
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.isInterstitialLoaded = true
+            self?.adImpressions += 1
+            print("🎯 Interstitial ad loaded (simulated)")
             completion?(true)
         }
     }
     
     // MARK: - Show Interstitial Ad
-    func showInterstitialAd(from viewController: UIViewController, completion: (() -> Void)? = nil) {
-        guard let ad = interstitialAd, isInterstitialLoaded else {
+    func showInterstitialAd(completion: (() -> Void)? = nil) {
+        guard isInterstitialLoaded else {
             print("❌ Interstitial ad not loaded")
             completion?()
             return
         }
         
-        ad.present(fromRootViewController: viewController)
-        completion?()
+        print("🎯 Showing interstitial ad (simulated)")
+        isInterstitialLoaded = false
+        adClicks += 1
+        
+        // Simüle gösterim süresi
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            completion?()
+            // Auto-reload
+            self.loadInterstitialAd()
+        }
     }
     
     // MARK: - Load Rewarded Ad
     func loadRewardedAd(completion: ((Bool) -> Void)? = nil) {
-        let request = GADRequest()
-        
-        GADRewardedAd.load(
-            withAdUnitID: AdsService.rewardedAdUnitId,
-            request: request
-        ) { [weak self] ad, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                print("❌ Rewarded ad failed to load: \(error.localizedDescription)")
-                self.isRewardedLoaded = false
-                completion?(false)
-                return
-            }
-            
-            self.rewardedAd = ad
-            self.rewardedAd?.fullScreenContentDelegate = self
-            self.isRewardedLoaded = true
-            self.adImpressions += 1
-            print("🎯 Rewarded ad loaded successfully")
+        // Simüle yükleme
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.isRewardedLoaded = true
+            self?.adImpressions += 1
+            print("🎯 Rewarded ad loaded (simulated)")
             completion?(true)
         }
     }
     
     // MARK: - Show Rewarded Ad
-    func showRewardedAd(from viewController: UIViewController, completion: @escaping (GADAdReward?) -> Void) {
-        guard let ad = rewardedAd, isRewardedLoaded else {
+    func showRewardedAd(completion: @escaping (Bool) -> Void) {
+        guard isRewardedLoaded else {
             print("❌ Rewarded ad not loaded")
-            completion(nil)
+            completion(false)
             return
         }
         
-        ad.present(fromRootViewController: viewController) {
-            let reward = ad.adReward
-            print("🎯 User earned reward: \(reward.amount) \(reward.type)")
-            completion(reward)
+        print("🎯 Showing rewarded ad (simulated)")
+        isRewardedLoaded = false
+        adClicks += 1
+        
+        // Simüle reklam izleme süresi
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            print("🎯 User earned reward (simulated)")
+            completion(true)
+            // Auto-reload
+            self.loadRewardedAd()
         }
     }
     
     // MARK: - Dispose Ads
     func disposeInterstitialAd() {
-        interstitialAd = nil
         isInterstitialLoaded = false
     }
     
     func disposeRewardedAd() {
-        rewardedAd = nil
         isRewardedLoaded = false
     }
     
@@ -132,62 +108,32 @@ final class AdsService: NSObject {
     }
 }
 
-// MARK: - Full Screen Content Delegate
-extension AdsService: GADFullScreenContentDelegate {
-    func adDidDismissFullScreenContent(_ ad: GADFullScreenPresentingAd) {
-        print("🎯 Ad dismissed")
-        // Reload ads after dismissal
-        if ad is GADInterstitialAd {
-            isInterstitialLoaded = false
-            loadInterstitialAd()
-        } else if ad is GADRewardedAd {
-            isRewardedLoaded = false
-            loadRewardedAd()
-        }
-    }
-    
-    func ad(_ ad: GADFullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
-        print("❌ Ad failed to present: \(error.localizedDescription)")
-        if ad is GADInterstitialAd {
-            isInterstitialLoaded = false
-        } else if ad is GADRewardedAd {
-            isRewardedLoaded = false
-        }
-    }
-    
-    func adDidRecordClick(_ ad: GADFullScreenPresentingAd) {
-        adClicks += 1
-        print("🎯 Ad clicked")
-    }
-    
-    func adDidRecordImpression(_ ad: GADFullScreenPresentingAd) {
-        print("🎯 Ad impression recorded")
-    }
-}
-
-// MARK: - Banner Ad View (SwiftUI)
-import SwiftUI
-
-struct BannerAdView: UIViewRepresentable {
+// MARK: - Banner Ad View (SwiftUI) - Placeholder
+struct BannerAdView: View {
     let adUnitID: String
     
     init(adUnitID: String = AdsService.bannerAdUnitId) {
         self.adUnitID = adUnitID
     }
     
-    func makeUIView(context: Context) -> GADBannerView {
-        let bannerView = GADBannerView(adSize: GADAdSizeBanner)
-        bannerView.adUnitID = adUnitID
-        
-        // Get root view controller
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first?.rootViewController {
-            bannerView.rootViewController = rootVC
+    var body: some View {
+        // Placeholder banner - gerçek entegrasyon için GoogleMobileAds SDK gerekli
+        HStack(spacing: 8) {
+            Image(systemName: "megaphone.fill")
+                .foregroundColor(.white.opacity(0.5))
+            Text("Reklam Alanı")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
         }
-        
-        bannerView.load(GADRequest())
-        return bannerView
+        .frame(maxWidth: .infinity)
+        .frame(height: 50)
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(8)
     }
-    
-    func updateUIView(_ uiView: GADBannerView, context: Context) {}
+}
+
+#Preview {
+    BannerAdView()
+        .padding()
+        .background(Color.black)
 }

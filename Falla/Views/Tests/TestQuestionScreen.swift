@@ -499,6 +499,7 @@ extension TestQuestionScreen {
             TestResultScreen(result: result)
         }
     }
+}
 
 // MARK: - Option Button
 struct OptionButton: View {
