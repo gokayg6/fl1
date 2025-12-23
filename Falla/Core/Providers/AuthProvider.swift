@@ -1,199 +1,148 @@
-import Foundation
-import Combine
+import SwiftUI
 import FirebaseAuth
+import FirebaseFirestore
 
 // MARK: - Auth Provider
+@MainActor
 class AuthProvider: ObservableObject {
-    @Published var currentUser: UserModel?
-    @Published var isAuthenticated: Bool = false
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String?
+    @Published var user: User?
+    @Published var isAuthenticated = false
+    @Published var isLoading = false
+    @Published var error: String?
     
-    private let firebaseService = FirebaseService.shared
-    private var authStateHandle: AuthStateDidChangeListenerHandle?
+    private let auth = Auth.auth()
+    private let db = Firestore.firestore()
     
     init() {
-        setupAuthStateListener()
-    }
-    
-    deinit {
-        if let handle = authStateHandle {
-            firebaseService.removeAuthStateListener(handle)
-        }
-    }
-    
-    // MARK: - Auth State Listener
-    private func setupAuthStateListener() {
-        authStateHandle = firebaseService.addAuthStateListener { [weak self] user in
-            Task { @MainActor in
-                if let user = user {
-                    self?.isAuthenticated = true
-                    await self?.fetchUserData(userId: user.uid)
-                } else {
-                    self?.isAuthenticated = false
-                    self?.currentUser = nil
-                }
+        // Listen to auth state changes
+        auth.addStateDidChangeListener { [weak self] _, user in
+            DispatchQueue.main.async {
+                self?.user = user
+                self?.isAuthenticated = user != nil
             }
-        }
-    }
-    
-    private func fetchUserData(userId: String) async {
-        do {
-            if let userModel = try await firebaseService.getUserDocument(userId: userId) {
-                await MainActor.run {
-                    self.currentUser = userModel
-                }
-            }
-        } catch {
-            print("Error fetching user data: \(error)")
         }
     }
     
     // MARK: - Sign In with Email
-    func signInWithEmail(email: String, password: String) async -> Bool {
-        await MainActor.run { 
-            isLoading = true 
-            errorMessage = nil
-        }
+    func signIn(email: String, password: String) async throws {
+        isLoading = true
+        error = nil
         
         do {
-            let user = try await firebaseService.signInWithEmail(email: email, password: password)
-            await fetchUserData(userId: user.uid)
-            
-            await MainActor.run {
-                isLoading = false
-                isAuthenticated = true
-            }
-            return true
+            let result = try await auth.signIn(withEmail: email, password: password)
+            user = result.user
+            isAuthenticated = true
+            try await updateLastLogin()
+            print("✅ User signed in: \(result.user.uid)")
         } catch {
-            await MainActor.run {
-                isLoading = false
-                errorMessage = error.localizedDescription
-            }
-            return false
+            self.error = error.localizedDescription
+            throw error
         }
+        
+        isLoading = false
     }
     
     // MARK: - Sign Up with Email
-    func signUpWithEmail(
-        email: String,
-        password: String,
-        displayName: String,
-        birthDate: Date? = nil,
-        zodiacSign: String? = nil,
-        gender: String? = nil
-    ) async -> Bool {
-        await MainActor.run { 
-            isLoading = true 
-            errorMessage = nil
-        }
+    func signUp(email: String, password: String, name: String) async throws {
+        isLoading = true
+        error = nil
         
         do {
-            let user = try await firebaseService.signUpWithEmail(
-                email: email,
-                password: password,
-                displayName: displayName
-            )
+            let result = try await auth.createUser(withEmail: email, password: password)
+            user = result.user
+            isAuthenticated = true
             
-            await MainActor.run {
-                isLoading = false
-                isAuthenticated = true
-                currentUser = UserModel(
-                    id: user.uid,
-                    email: email,
-                    displayName: displayName,
-                    birthDate: birthDate,
-                    zodiacSign: zodiacSign,
-                    gender: gender
-                )
-            }
-            return true
-        } catch {
-            await MainActor.run {
-                isLoading = false
-                errorMessage = error.localizedDescription
-            }
-            return false
-        }
-    }
-    
-    // MARK: - Sign In with Google
-    func signInWithGoogle() async -> Bool {
-        await MainActor.run { 
-            isLoading = true 
-            errorMessage = nil
-        }
-        
-        // TODO: Implement Google Sign In with Firebase
-        // Requires GoogleSignIn SDK integration
-        
-        await MainActor.run {
-            isLoading = false
-            errorMessage = "Google Sign In coming soon"
-        }
-        
-        return false
-    }
-    
-    // MARK: - Sign In Anonymously (Guest)
-    func signInAnonymously(birthDate: Date? = nil) async -> Bool {
-        await MainActor.run { 
-            isLoading = true 
-            errorMessage = nil
-        }
-        
-        do {
-            let user = try await firebaseService.signInAnonymously()
+            // Create user document in Firestore
+            try await createUserDocument(userId: result.user.uid, name: name, email: email)
             
-            await MainActor.run {
-                isLoading = false
-                isAuthenticated = true
-                currentUser = UserModel(
-                    id: user.uid,
-                    birthDate: birthDate
-                )
-            }
-            return true
+            print("✅ User created: \(result.user.uid)")
         } catch {
-            await MainActor.run {
-                isLoading = false
-                errorMessage = error.localizedDescription
-            }
-            return false
+            self.error = error.localizedDescription
+            throw error
         }
+        
+        isLoading = false
     }
     
     // MARK: - Sign Out
-    func signOut() {
+    func signOut() throws {
         do {
-            try firebaseService.signOut()
-            currentUser = nil
+            try auth.signOut()
+            user = nil
             isAuthenticated = false
+            print("✅ User signed out")
         } catch {
-            errorMessage = error.localizedDescription
+            self.error = error.localizedDescription
+            throw error
         }
     }
     
-    // MARK: - Reset Password
-    func resetPassword(email: String) async -> Bool {
-        await MainActor.run { 
-            isLoading = true 
-            errorMessage = nil
-        }
+    // MARK: - Delete Account
+    func deleteAccount() async throws {
+        guard let currentUser = auth.currentUser else { return }
+        
+        isLoading = true
         
         do {
-            try await firebaseService.resetPassword(email: email)
+            // Delete user document
+            try await db.collection("users").document(currentUser.uid).delete()
             
-            await MainActor.run {
-                isLoading = false
-            }
-            return true
+            // Delete user auth
+            try await currentUser.delete()
+            
+            user = nil
+            isAuthenticated = false
+            print("✅ User account deleted")
         } catch {
-            await MainActor.run {
-                isLoading = false
-                errorMessage = error.localizedDescription
-            }
-            return false
+            self.error = error.localizedDescription
+            throw error
         }
+        
+        isLoading = false
+    }
+    
+    // MARK: - Guest Sign In
+    func signInAsGuest() async throws {
+        isLoading = true
+        error = nil
+        
+        do {
+            let result = try await auth.signInAnonymously()
+            user = result.user
+            isAuthenticated = true
+            
+            // Create guest user document
+            try await createUserDocument(userId: result.user.uid, name: "Misafir", email: nil, isGuest: true)
+            
+            print("✅ Guest signed in: \(result.user.uid)")
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
+        
+        isLoading = false
+    }
+    
+    // MARK: - Private Helpers
+    private func createUserDocument(userId: String, name: String, email: String?, isGuest: Bool = false) async throws {
+        let userData: [String: Any] = [
+            "id": userId,
+            "name": name,
+            "email": email ?? "",
+            "isGuest": isGuest,
+            "karma": 100,
+            "createdAt": Timestamp(date: Date()),
+            "lastLoginAt": Timestamp(date: Date())
+        ]
+        
+        try await db.collection("users").document(userId).setData(userData)
+    }
+    
+    private func updateLastLogin() async throws {
+        guard let userId = user?.uid else { return }
+        
+        try await db.collection("users").document(userId).updateData([
+            "lastLoginAt": Timestamp(date: Date())
+        ])
     }
 }
